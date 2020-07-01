@@ -1,0 +1,15 @@
+[package]
+name = "stratapaint_server"
+version = "0.1.0"
+authors = ["jordan"]
+edition = "2018"
+
+
+[dependencies]
+tokio = { version = "0.2", features = ["macros"]}
+warp = { version = "0.2" }
+futures = { version = "0.3.5" }
+
+[[bin]]
+name = "gameserver"
+path = "src/server.rs"

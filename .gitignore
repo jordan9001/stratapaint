@@ -1,0 +1,6 @@
+*.swp
+*.wasm
+*.wat
+**/Cargo.lock
+**/target
+/build
