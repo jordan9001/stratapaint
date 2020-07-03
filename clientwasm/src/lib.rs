@@ -12,6 +12,9 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 #[wasm_bindgen]
 extern {
     fn alert(s: &str);
+
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
 }
 
 #[wasm_bindgen]
@@ -78,6 +81,7 @@ struct Game {
     tickratio: u32, // # of ticks before a netstep tick, doesn't change
     tickstep: f32, // game seconds per tick, doesn't change (try to keep real seconds per tick similar to this)
     dispratio: f32, // current game seconds to go per real second for drawing to the screen, smooths lag and ticks
+    nexttick: u32, // next tick to process
     map: GameMap, // the static map (walls and cover) below the changing paint layers
     usermap: GameMap, // a buffer that is passed to the javascript layer to take in paint changes
     ctx: web_sys::CanvasRenderingContext2d, // the canvas ctx
@@ -93,8 +97,10 @@ pub fn init_game(can_id: &str, mapw: u32, maph: u32, tick_ratio: u32, tick_step:
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
-    // drop any previous game?
-    //TODO
+    // drop any previous game
+    GAME.with(|g| {
+        *g.borrow_mut() = None;
+    });
 
     // get canvas
     let document = web_sys::window().unwrap().document().unwrap();
@@ -117,18 +123,24 @@ pub fn init_game(can_id: &str, mapw: u32, maph: u32, tick_ratio: u32, tick_step:
             tickratio: tick_ratio,
             tickstep: tick_step,
             dispratio: 1.0,
+            nexttick: 0,
             map: GameMap::new(mapw, maph),
             usermap: GameMap::new(mapw, maph),
             ctx,
         });
     });
+}
 
+#[wasm_bindgen]
+pub fn draw(dt: f32) {
+    GAME.with(|g| {
+        if let Some(game) = &*g.borrow_mut() {
+            log(&format!("Draw called with dt {}", dt)[..]);
+        }
+    });
 }
 
 //API
-
-// init_game(canvas id, ticks per netstep, mapx, mapy, target tick rate per second)
-// target tick rate helps us lerp for the draw call
 
 // get_paint_buf()
 

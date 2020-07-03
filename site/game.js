@@ -16,6 +16,10 @@ function main() {
 
     greet();
 
+    init_game("canvas", 1000, 1000, 0x100, 0.2);
+
+    draw(0.0);
+
     // wasm jobs:
     // game logic 
     // drawing
@@ -28,7 +32,7 @@ function main() {
 }
 
 // first init webasm and import the symbols we need
-import init, { greet } from './clientwasm.js';
+import init, { greet, init_game, draw } from './clientwasm.js';
 (async function() {
 	await init();
 

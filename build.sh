@@ -1,5 +1,8 @@
 #!/bin/bash
 
+set -e
+set -v
+
 # this should eventually be a Makefile, but I am using a .sh file for now
 # also this does all debug stuff for now
 
