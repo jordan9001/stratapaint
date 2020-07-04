@@ -1,7 +1,34 @@
+'use strict';
 
+var prevts = 0;
+function dodraw(ts) {
+    // draw the game
+    var dt = ts - prevts;
+    prevts = ts;
+    if (dt <= 0) {
+        dt = 0;
+    }
+    //console.log("draw : ", dt);
+    
+    //dotick();
+    draw(dt);
 
+    requestAnimationFrame(dodraw);
+}
 
-
+var prevtick = 0;
+function dotick() {
+    /*
+    var ts = performance.now();
+    var dt = ts - prevtick;
+    prevtick = ts;
+    if (dt <= 0) {
+        dt = 0;
+    }
+    console.log("tick : ", dt);
+    */
+    tick();
+}
 
 function main() {
     console.log("Game loading...");
@@ -11,14 +38,25 @@ function main() {
         ws.send("PING");
     };
     ws.onmessage = function(msg) {
-        console.log(msg);
-    }
+        //console.log(msg);
+    };
+    ws.onclose = function() {
+        //console.log("Connection closed!");
+    };
 
-    greet();
+    // set up canvas zooming/ moving
+    //TODO
 
-    init_game("canvas", 1000, 1000, 0x100, 0.2);
+    var tick_step = 100;
 
-    draw(0.0);
+    init_game("canvas", 900, 600, 0x100, tick_step, 0);
+
+    // start drawing
+    requestAnimationFrame(dodraw);
+
+    // start ticks
+    //TODO move tick stuff this to a separate looping callback unaffected by tab being inactive
+    setInterval(dotick, tick_step);
 
     // wasm jobs:
     // game logic 
@@ -32,9 +70,13 @@ function main() {
 }
 
 // first init webasm and import the symbols we need
-import init, { greet, init_game, draw } from './clientwasm.js';
+import init, { adj_dis, init_game, tick, draw } from './clientwasm.js';
 (async function() {
 	await init();
 
 	main();
 })();
+
+
+//DEBUG
+window.adj_dis = adj_dis;
