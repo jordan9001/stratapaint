@@ -49,7 +49,7 @@ function main() {
 
     var tick_step = 100;
 
-    init_game("canvas", 900, 600, 0x100, tick_step, 0);
+    init_game("canvas", 900, 900, 0x100, tick_step, 0);
 
     // start drawing
     requestAnimationFrame(dodraw);
