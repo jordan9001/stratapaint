@@ -6,7 +6,6 @@ use std::f32;
 use rand_xorshift::XorShiftRng;
 use rand::SeedableRng;
 use rand::Rng;
-use std::cmp::Ordering;
 use std::collections::HashMap;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -31,255 +30,69 @@ struct BotState {
     y: f32,
     vx: f32,
     vy: f32,
-    team: u16,
+    team: i32,
     cur_target: u32,
 }
 
 // bot constants
 const BOTRAD: f64 = 2.1;
-const BOTRANDMAXACC: f32 = 10.0;
-const BOTMAXVEL: f32 = 27.0;
+const BOTRANDMAXACC: f32 = 15.0;
+const BOTMAXVEL: f32 = 42.0;
 const BOTBOUNCEAMT: f32 = 0.42;
+const BOTCOLSZ: f32 = (BOTRAD as f32) * 0.15;
 
 #[derive(Clone)]
-enum QuadBranch {
-    Branch(Box<(QuadNode, QuadNode, QuadNode, QuadNode)>), // nw,ne,se,sw
-    BotList(Vec<(u32, u32, u32)>),
-    Nothing,
+struct LocationGroups {
+    groupw: u32,
+    grouph: u32,
+    vecs: Vec<Vec<u32>>,
 }
 
-#[derive(Clone)]
-struct QuadNode {
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-    brn: QuadBranch,
-}
+// LocationGroup constants
+const GROUPSHIFT: u32 = 5;
 
-// QuadNode constants
-const QUADSPLITMIN: u32 = 64;
-const QUADBALANCE: usize = 90;
-
-impl QuadNode {
-    fn add_bot(&mut self, bt: (u32, u32, u32)) { // (id, x, y)
-        let midx = self.x + (self.w / 2);
-        let midy = self.y + (self.h / 2);
-        match &mut self.brn {
-            QuadBranch::Nothing => {
-                let lst: Vec<(u32, u32, u32)> = vec![bt];
-                self.brn = QuadBranch::BotList(lst);
-            },
-            QuadBranch::Branch(b) => {
-                if bt.1 < midx {
-                    if bt.2 < midy {
-                        b.0.add_bot(bt);
-                    } else {
-                        b.3.add_bot(bt);
-                    }
-                } else {
-                    if bt.2 < midy {
-                        b.1.add_bot(bt);
-                    } else {
-                        b.2.add_bot(bt);
-                    }
-                }
-            },
-            QuadBranch::BotList(bl) => {
-                if (bl.len() >= QUADBALANCE) && (self.w > QUADSPLITMIN && self.h > QUADSPLITMIN) {
-                    // split
-                    let mut bx = Box::new((
-                        QuadNode{ // nw
-                            x: self.x,
-                            y: self.y,
-                            w: (self.w / 2),
-                            h: (self.h / 2),
-                            brn: QuadBranch::Nothing,
-                        },
-                        QuadNode{ // ne
-                            x: midx,
-                            y: self.y,
-                            w: self.w - (self.w / 2),
-                            h: (self.h / 2),
-                            brn: QuadBranch::Nothing,
-                        },
-                        QuadNode{ // se
-                            x: midx,
-                            y: midy,
-                            w: self.w - (self.w / 2),
-                            h: self.h - (self.h / 2),
-                            brn: QuadBranch::Nothing,
-                        },
-                        QuadNode{ // sw
-                            x: self.x,
-                            y: midy,
-                            w: (self.w / 2),
-                            h: self.h - (self.h / 2),
-                            brn: QuadBranch::Nothing,
-                        },
-                    ));
-
-                    // add old ones
-                    for binf in bl {
-                        if (binf.1 as u32) < midx {
-                            if (binf.2 as u32) < midy {
-                                bx.0.add_bot(bt);
-                            } else {
-                                bx.3.add_bot(bt);
-                            }
-                        } else {
-                            if (binf.2 as u32) < midy {
-                                bx.1.add_bot(bt);
-                            } else {
-                                bx.2.add_bot(bt);
-                            }
-                        }
-                    }
-
-                    // add new one (don't keep splitting right now, just go past max if all ended up same spot)
-                    if bt.1 < midx {
-                        if bt.2 < midy {
-                            bx.0.add_bot(bt);
-                        } else {
-                            bx.3.add_bot(bt);
-                        }
-                    } else {
-                        if bt.2 < midy {
-                            bx.1.add_bot(bt);
-                        } else {
-                            bx.2.add_bot(bt);
-                        }
-                    }
-
-                    self.brn = QuadBranch::Branch(bx);
-                } else {
-                    bl.push(bt);
-                }
-            }
+impl LocationGroups {
+    fn new(mapw: u32, maph: u32) -> LocationGroups {
+        let groupw = (mapw >> GROUPSHIFT)+1;
+        let grouph = (maph >> GROUPSHIFT)+1;
+        let mut vecs: Vec<Vec<u32>> = Vec::new();
+        for _ in 0..(groupw * grouph) {
+            vecs.push(Vec::new());
         }
-    }
-    fn move_bot(&mut self, bt: (u32, u32, u32), prevx: u32, prevy: u32) -> bool {
-        //TODO
-        // find
-        // if we can update, do that
-        // else remove, add if possible (might be from upper layer)
-
-        let midx = self.x + (self.w / 2);
-        let midy = self.y + (self.h / 2);
-        return match &mut self.brn {
-            QuadBranch::Nothing => {
-                panic!("Looking to move bot in an empty node");
-            },
-            QuadBranch::Branch(b) => {
-                let under: &mut QuadNode = if prevx < midx {
-                    if prevy < midy {
-                        &mut b.0
-                    } else {
-                        &mut b.3
-                    }
-                } else {
-                    if prevy < midy {
-                        &mut b.1
-                    } else {
-                        &mut b.2
-                    }
-                };
-
-                if !under.move_bot(bt, prevx, prevy) {
-                    // removed bot, but could not add again, because was out of range
-                    // add if we can, or pass false up
-                    if (bt.1 < self.x) ||
-                        (bt.1 >= (self.x + self.w)) ||
-                        (bt.2 < self.y) ||
-                        (bt.2 >= (self.y + self.h))
-                    {
-                        false // out of our bounds, can not move it locally
-                    } else {
-                        // add it below
-                        if bt.1 < midx {
-                            if bt.2 < midy {
-                                b.0.add_bot(bt);
-                            } else {
-                                b.3.add_bot(bt);
-                            }
-                        } else {
-                            if bt.2 < midy {
-                                b.1.add_bot(bt);
-                            } else {
-                                b.2.add_bot(bt);
-                            }
-                        }
-                        true // we moved it to another of our unders
-                    }
-                } else {
-                    true // under us moved it just fine
-                }
-            },
-            QuadBranch::BotList(bl) => {
-                let mut found = false;
-                let mut moved = false;
-                for i in 0..bl.len() {
-                    if bl[i].0 == bt.0 {
-                        found = true;
-                        if (bt.1 < self.x) ||
-                            (bt.1 >= (self.x + self.w)) ||
-                            (bt.2 < self.y) ||
-                            (bt.2 >= (self.y + self.h))
-                        {
-                            // can't move, just remove it
-                            bl.remove(i);
-                        } else {
-                            moved = true;
-                            bl[i].1 = bt.1;
-                            bl[i].2 = bt.2;
-                        }
-                        break;
-                    }
-                }
-                if !found {
-                    panic!("Unable to find bot to remove");
-                }
-
-                moved // return if we moved it or not
-            }
+        LocationGroups {
+            groupw,
+            grouph,
+            vecs,
         }
     }
 
-    fn rm_bot(&mut self, bt: (u32, u32, u32)) {
-        let midx = self.x + (self.w / 2);
-        let midy = self.y + (self.h / 2);
-        match &mut self.brn {
-            QuadBranch::Nothing => {
-                panic!("Looking to remove bot in an empty node");
-            },
-            QuadBranch::Branch(b) => {
-                if bt.1 < midx {
-                    if bt.2 < midy {
-                        b.0.rm_bot(bt);
-                    } else {
-                        b.3.rm_bot(bt);
-                    }
-                } else {
-                    if bt.2 < midy {
-                        b.1.rm_bot(bt);
-                    } else {
-                        b.2.rm_bot(bt);
-                    }
-                }
-            },
-            QuadBranch::BotList(bl) => {
-                let mut found = false;
-                for i in 0..bl.len() {
-                    if bl[i].0 == bt.0 {
-                        found = true;
-                        bl.remove(i);
-                        break;
-                    }
-                }
-                if !found {
-                    panic!("Unable to find bot to remove");
-                }
+    fn add_bot(&mut self, id: u32, x: u32, y: u32) {
+        let xgroup = x >> GROUPSHIFT;
+        let ygroup = y >> GROUPSHIFT;
+
+        self.vecs[(xgroup + (ygroup * self.groupw)) as usize].push(id);
+    }
+
+    fn rm_bot(&mut self, id: u32, x: u32, y: u32) {
+        let xgroup = x >> GROUPSHIFT;
+        let ygroup = y >> GROUPSHIFT;
+
+        let v = &mut self.vecs[(xgroup + (ygroup * self.groupw)) as usize];
+
+        for i in 0..v.len() {
+            if v[i] == id {
+                v.remove(i);
+                return;
             }
+        }
+
+        panic!("Didn't find bot where it was supposed to be in LocationGroups!");
+    }
+
+    fn move_bot(&mut self, id: u32, old_x: u32, old_y: u32, new_x: u32, new_y: u32) {
+        if ((old_x >> GROUPSHIFT) != (new_x >> GROUPSHIFT)) || ((old_y >> GROUPSHIFT) != (new_y >> GROUPSHIFT)) {
+            self.rm_bot(id, old_x, old_y);
+            self.add_bot(id, new_x, new_y);
         }
     }
 }
@@ -314,18 +127,18 @@ impl GameMap {
 
 // game tick structure
 // has to contain the current paint layers, and the current bot states, the base states
+// anything needed for the display needs to be here, because it can lag
+// and anything that can come from the "future" from the network: other player's paints
 #[derive(Clone)]
 struct GameTick {
     tick: u32,
     bases: Vec<BaseState>,
-    bots: HashMap<u32, BotState>, // Vector must always have lower bot id's ordered with indexes
-    //bottree: QuadNode, // QuadTree of bots, used for avoiding and targeting nearby bots //TODO see if this is more performant than occasional search
+    bots: HashMap<u32, RefCell<BotState>>, // Vector must always have lower bot id's ordered with indexes
     teambotcount: Vec<u32>,
     paints: Vec<GameMap>, // Maybe we want to have a DeltaMap option?
 }
 
 impl GameTick {
-
     // cleans out things only needed for future tick processing
     // and keeps the things needed for future drawing
     fn cleanup(&mut self) {
@@ -335,15 +148,18 @@ impl GameTick {
 
 struct DisplayInfo {
     pk: f32,
-    //dk: f32,
-    //ik: f32,
-    ratio: f32, // current game seconds to go per real second for drawing to the screen, smooths lag and ticks
-    tick: f32,   // where we are displaying in ticks
-    targetlag: f32, // how far behind we want to be in ticks
-    preverr: f32,
     avgerr: Vec<f32>,
+    avgerrsum: f32,
+    //preverr: f32,
     //avgderr: Vec<f32>,
     //ierr: f32,
+    //dk: f32,
+    //ik: f32,
+    targetlag: f32, // how far behind we want to be in ticks
+    ratio: f32, // current game seconds to go per real second for drawing to the screen, smooths lag and ticks
+    tick: f32,   // where we are displaying in ticks
+    
+    //TODO add in particle effects tracking here for shooting
 }
 
 // display constants and initial values
@@ -359,6 +175,7 @@ const DIS_EHIST: usize = 64;
 // has to contain a vec of GameTicks we have processed or are working on
 // also contains static game info, including the board layout
 struct Game {
+    bottree: LocationGroups, // collection of bots in curtick, used for avoiding and targeting nearby bots
     states: Vec<GameTick>, // vector must always have the newest ticks (higher number) at lower indexes
     tickratio: u32, // # of ticks before a netstep tick, doesn't change
     tickstep: f32, // game seconds per tick, doesn't change (try to keep real seconds per tick similar to this)
@@ -374,8 +191,27 @@ struct Game {
 
 // Game constants
 const STARTID: u32 = 1;
+const MAXCHECK: u32 = 9;
 
 impl Game {
+    fn add_bot(&mut self, tk: &mut GameTick, x: f32, y: f32, id: u32, team: i32) {
+        tk.bots.insert(id, RefCell::new(BotState {
+            id,
+            health: 100.0,
+            x,
+            y,
+            vx: 0.0,
+            vy: 0.0,
+            cur_target: 0,
+            team,
+        }));
+        tk.teambotcount[team as usize] += 1;
+
+        // add to tree
+        self.bottree.add_bot(id, x as u32, y as u32);
+    }
+
+
     fn init_state(&mut self) {
         // create the inital state and game map
         if !self.states.is_empty() {
@@ -389,13 +225,6 @@ impl Game {
             tick: 0,
             bases: Vec::new(),
             bots: HashMap::new(),
-            /*bottree: QuadNode {
-                x: 0,
-                y: 0,
-                w: self.map.w,
-                h: self.map.h,
-                brn: QuadBranch::Nothing,
-            },*/
             teambotcount: Vec::new(),
             paints: Vec::new(),
         };
@@ -409,25 +238,39 @@ impl Game {
         }
 
         // for now spawn a bunch of bots all across the map
-        let stride = 12;
-        for x in 1..((self.map.w/stride)-1) {
-            for y in 1..((self.map.h/stride)-1) {
-                tk.bots.insert(self.objidcntr, BotState {
-                    id: self.objidcntr,
-                    health: 100.0,
-                    x: (x * stride) as f32,
-                    y: (y * stride) as f32,
-                    vx: 0.0,
-                    vy: 0.0,
-                    cur_target: 0,
-                    team: 0,
-                });
-                self.objidcntr += 1;
-                tk.teambotcount[0] += 1;
-            }
+        let mut rng = XorShiftRng::seed_from_u64((self.baseseed) as u64);
+
+        for _ in 0..1000 {
+            self.add_bot(
+                &mut tk, ((self.map.w as f32)/2.0) + rng.gen_range(-(self.map.w as f32)/3.0, (self.map.w as f32)/3.0),
+                ((self.map.h as f32)/2.0) + rng.gen_range(-(self.map.h as f32)/3.0, (self.map.h as f32)/3.0),
+                self.objidcntr,
+                0,
+            );
+            self.objidcntr += 1;
         }
 
-        log(&format!("starting out with {} bots", tk.teambotcount[0])[..]);
+        // spawn a bunch in the middle
+
+        for _ in 0..500 {
+            self.add_bot(
+                &mut tk,
+                ((self.map.w as f32)/2.0) + rng.gen_range(-20.0, 20.0),
+                ((self.map.h as f32)/2.0) + rng.gen_range(-20.0, 20.0),
+                self.objidcntr,
+                0,
+            );
+            self.objidcntr += 1;
+        }
+
+        // play around with starting velocities
+        for (_, b) in &mut tk.bots {
+            let b = &mut*b.borrow_mut();
+            b.vx = rng.gen_range(-BOTMAXVEL, BOTMAXVEL);
+            b.vy = rng.gen_range(-BOTMAXVEL, BOTMAXVEL);
+        }
+
+        log(&format!("starting out with {} bots", self.objidcntr)[..]);
 
         self.states.push(tk);
     }
@@ -453,30 +296,115 @@ impl Game {
         // get prng for this tick
         let mut rng = XorShiftRng::seed_from_u64((self.baseseed + newtk.tick) as u64);
         
-        for (_, bt) in newtk.bots.iter_mut() {
+        for k in newtk.bots.keys() {
             // add random accel to each bot
             let amt: f32 = rng.gen_range(0.0, BOTRANDMAXACC) * self.tickstep;
             let ang: f32 = rng.gen_range(0.0, f32::consts::PI * 2.0);
 
             let xpart: f32 = ang.cos() * amt;
             let ypart: f32 = ang.sin() * amt;
+
+            let bt = newtk.bots.get(k).unwrap();
+            let bt = &mut*bt.borrow_mut(); //TODO use Cell instead of refcell because it is copy
             bt.vx += xpart;
             bt.vy += ypart;
 
             // query paint for force
             //TODO
 
-            // move away from other bots?
-            //TODO
-            // +1 too a lower rez 2d map that can be used to "roll downhill" away from groups of bots
-        }
+            // loop through local bots
+            // just for avoidance for now
 
-        for (_, bt) in newtk.bots.iter_mut() {
-            // apply separation forces
-            //TODO
+            let xmin = bt.x - BOTCOLSZ;
+            let ymin = bt.y - BOTCOLSZ;
+            let xmax = bt.x + BOTCOLSZ;
+            let ymax = bt.y + BOTCOLSZ;
+
+            let xmin = if xmin <= 0.0 {
+                0
+            } else {
+                (xmin as u32) >> GROUPSHIFT
+            };
+            let ymin = if ymin <= 0.0 {
+                0
+            } else {
+                (ymin as u32) >> GROUPSHIFT
+            };
+            let xmax = (xmax as u32) >> GROUPSHIFT;
+            let xmax = if xmax >= self.bottree.groupw {
+                self.bottree.groupw
+            } else {
+                xmax+1
+            };
+            let ymax = (ymax as u32) >> GROUPSHIFT;
+            let ymax = if ymax >= self.bottree.grouph {
+                self.bottree.grouph
+            } else {
+                ymax+1
+            };
+
+            
+            // push apart close bots
+            for xg in xmin..xmax {
+                for yg in ymin..ymax {
+                    let mut numcheck = 0;
+                    for id2 in &self.bottree.vecs[(xg + (yg * self.bottree.groupw)) as usize] {
+                        // don't do the same work twice
+                        if id2 <= k {
+                            continue;
+                        }
+                        numcheck += 1;
+                        if numcheck > MAXCHECK {
+                            break;
+                        }
+
+                        let bt2 = newtk.bots.get(id2).unwrap();
+                        let bt2 = &mut*bt2.borrow_mut();
+
+                        // test boids
+
+                        
+                        let dx = bt.x - (*bt2).x;
+                        let dy = bt.y - (*bt2).y;
+
+                        if dx > 0.0 && dx < BOTCOLSZ {
+                            if bt.vx < 0.0 {
+                                bt.vx *= -BOTBOUNCEAMT;
+                            }
+                            if bt2.vx > 0.0 {
+                                bt2.vx *= -BOTBOUNCEAMT;
+                            }
+                        } else if dx < 0.0 && dx > -BOTCOLSZ {
+                            if bt.vx > 0.0 {
+                                bt.vx *= -BOTBOUNCEAMT;
+                            }
+                            if bt2.vx < 0.0 {
+                                bt2.vx *= -BOTBOUNCEAMT;
+                            }
+                        }
+
+                        if dy > 0.0 && dy < BOTCOLSZ {
+                            if bt.vy < 0.0 {
+                                bt.vy *= -BOTBOUNCEAMT;
+                            }
+                            if bt2.vy > 0.0 {
+                                bt2.vy *= -BOTBOUNCEAMT;
+                            }
+                        } else if dy < 0.0 && dy > -BOTCOLSZ {
+                            if bt.vy > 0.0 {
+                                bt.vy *= -BOTBOUNCEAMT;
+                            }
+                            if bt2.vy < 0.0 {
+                                bt2.vy *= -BOTBOUNCEAMT;
+                            }
+                        }
+                        
+                    }
+                }
+            }
 
             // max out vel
-            // simpler check than actual speed, but whatever
+            // just use a simple P-Inf norm, instead of doing any sqrt for now
             if bt.vx > BOTMAXVEL {
                 bt.vx = BOTMAXVEL;
             } else if bt.vx < -BOTMAXVEL {
@@ -507,6 +435,8 @@ impl Game {
                 bt.vy *= -BOTBOUNCEAMT;
             }
 
+            // move the bot
+            self.bottree.move_bot(bt.id, bt.x as u32, bt.y as u32, newx as u32, newy as u32);
             bt.x = newx;
             bt.y = newy;
         }
@@ -529,6 +459,29 @@ impl Game {
         
         self.states.insert(0, newtk);
         self.curtick += 1;
+
+        // do big cleanup
+        // clean up old ticks not needed anymore
+        let mut disp1 = self.dis.tick as u32;
+        if disp1 > self.curtick {
+            disp1 = self.curtick;
+        }
+
+        let mut i = 0;
+        while i < self.states.len() {
+            let mut isold: bool = false;
+            {
+                let t = &self.states[i];
+                if t.tick < disp1 {
+                    isold = true;
+                }
+            }
+            if isold {
+                self.states.remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     fn draw(&mut self, dt: f32) {
@@ -540,7 +493,7 @@ impl Game {
             self.dis.tick = self.curtick as f32;
             disp2 = self.curtick;
         }
-        let disp1 = self.dis.tick.floor() as u32;
+        let disp1 = self.dis.tick as u32;
         let lerpfac = self.dis.tick.fract();
 
         let mut i = 0;
@@ -569,6 +522,10 @@ impl Game {
 
             i += 1;
         };
+
+        //DEBUG
+        //let tk1 = self.get_cur_tick();
+        //let tk2 = self.get_cur_tick();
         
         // clear canvas
         // save transform
@@ -586,6 +543,9 @@ impl Game {
         // step through both ticks for bots
         for (id, bt1) in tk1.bots.iter() {
             if let Some(bt2) = tk2.bots.get(id) {
+
+                let bt1 = bt1.borrow();
+                let bt2 = bt2.borrow();
                 // lerp
                 let x: f32 = (lerpfac * (bt2.x - bt1.x)) + bt1.x;
                 let y: f32 = (lerpfac * (bt2.y - bt1.y)) + bt1.y;
@@ -593,6 +553,11 @@ impl Game {
                 self.ctx.begin_path();
                 self.ctx.arc(x as f64, y as f64, BOTRAD, 0.0, f64::consts::PI * 2.0).expect("Unable to draw bot");
                 self.ctx.fill();
+
+                //DEBUG
+                //self.ctx.begin_path();
+                //self.ctx.rect((x - (BOTCOLSZ/2.0)) as f64, (y - (BOTCOLSZ/2.0)) as f64, BOTCOLSZ as f64, BOTCOLSZ as f64);
+                //self.ctx.stroke();
             } // else must be removed by next tick
             //TODO explosion or something?
         }
@@ -605,70 +570,29 @@ impl Game {
 
         // adjust the ratio to even out
         let err = ((self.curtick as f32) - self.dis.targetlag) - self.dis.tick;
-        //self.dis.ierr += err;
-        //let derr = (err - self.dis.preverr) / dt;
-        self.dis.preverr = err;
+        self.dis.avgerrsum += err;
         self.dis.avgerr.push(err);
-        //self.dis.avgderr.push(derr);
-        if self.dis.avgerr.len() > DIS_EHIST {
-            self.dis.avgerr.remove(0);
-            //self.dis.avgderr.remove(0);
+        let elen = self.dis.avgerr.len();
+        if elen > DIS_EHIST {
+            self.dis.avgerrsum -= self.dis.avgerr.remove(0);
         }
 
-        let err = self.dis.avgerr.iter().sum::<f32>() / (self.dis.avgerr.len() as f32);
-        //let derr = self.dis.avgderr.iter().sum::<f32>() / (self.dis.avgderr.len() as f32);
+        let err = self.dis.avgerrsum / (elen as f32);
         
         self.dis.ratio = self.dis.pk * err;
-            //+ (self.dis.dk * derr)
-            //+ (self.dis.ik * self.dis.ierr);
         if self.dis.ratio <= DIS_RMIN {
             self.dis.ratio = DIS_RMIN;
         } else if self.dis.ratio >= DIS_RMAX {
             self.dis.ratio = DIS_RMAX;
         }
 
-        
         //DEBUG
-        log(&format!(
-            "cur: {}\ndisp: {}\nerr: {}\ndt: {}\nratio: {}",
-            self.curtick,
-            self.dis.tick,
-            err,
-            dt,
-            self.dis.ratio,
-        )[..]);
-        
-
-        ////DEBUG
-        //if disp1 == self.curtick {
-        //    log(&format!("WARNING, RAILED {}", disp1)[..])
-        //}
+        if disp1 == self.curtick {
+            log(&format!("WARNING, RAILED {}", disp1)[..])
+        }
 
         // move our displayed tick
         self.dis.tick += dt * self.dis.ratio;
-
-        // clean up old ticks not needed anymore
-        let mut disp1 = self.dis.tick.floor() as u32;
-        if disp1 > self.curtick {
-            disp1 = self.curtick;
-        }
-
-        let mut i = 0;
-        while i < self.states.len() {
-            let mut isold: bool = false;
-            {
-                let t = &self.states[i];
-                if t.tick < disp1 {
-                    isold = true;
-                }
-            }
-            if isold {
-                self.states.remove(i);
-            } else {
-                i += 1;
-            }
-        }
-        
     }
 
     fn get_cur_tick(&self) -> &GameTick {
@@ -734,6 +658,7 @@ pub fn init_game(can_id: &str,
         let g = &mut *g.borrow_mut();
         *g = Some(Game {
             states: Vec::new(),
+            bottree: LocationGroups::new(mapw, maph),
             tickratio: tick_ratio,
             tickstep,
             curtick: 0,
@@ -741,13 +666,14 @@ pub fn init_game(can_id: &str,
                 pk: DIS_PK,
                 //dk: DIS_DK,
                 //ik: DIS_IK,
+                //preverr: 0.0,
+                //avgderr: Vec::new(),
+                //ierr: 0.0,
                 ratio: dispratio,
                 tick: 0.0,
                 targetlag: DIS_LAG,
-                preverr: 0.0,
                 avgerr: Vec::new(),
-                //avgderr: Vec::new(),
-                //ierr: 0.0,
+                avgerrsum: 0.0,
             },
             map: GameMap::new(mapw, maph),
             usermap: GameMap::new(mapw, maph),

@@ -1,6 +1,7 @@
 'use strict';
 
 var prevts = 0;
+var avdt = [];
 function dodraw(ts) {
     // draw the game
     var dt = ts - prevts;
@@ -8,26 +9,34 @@ function dodraw(ts) {
     if (dt <= 0) {
         dt = 0;
     }
-    //console.log("draw : ", dt);
-    
-    //dotick();
+
+    avdt.push(dt);
+    if (avdt.length > 64) {
+        avdt.shift();
+    }
+
+    if (avtick.length != 0) {
+        console.log("" + dt + "\navg draw: " + avdt.reduce(function(a,b) { return a + b; }) / avdt.length + "\navg tick: ", avtick.reduce(function(a,b) { return a + b; }) / avtick.length);
+    }
+
     draw(dt);
 
     requestAnimationFrame(dodraw);
 }
 
 var prevtick = 0;
+var avtick = [];
 function dotick() {
-    /*
     var ts = performance.now();
-    var dt = ts - prevtick;
-    prevtick = ts;
-    if (dt <= 0) {
-        dt = 0;
-    }
-    console.log("tick : ", dt);
-    */
+    
     tick();
+
+    var dt = performance.now() - ts;
+    prevtick = dt;
+    avtick.push(dt);
+    if (avtick.length > 64) {
+        avtick.shift();
+    }
 }
 
 function main() {
@@ -47,7 +56,7 @@ function main() {
     // set up canvas zooming/ moving
     //TODO
 
-    var tick_step = 100;
+    var tick_step = 150;
 
     init_game("canvas", 900, 900, 0x100, tick_step, 0);
 
