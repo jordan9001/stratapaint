@@ -35,7 +35,7 @@ struct BotState {
 }
 
 // bot constants
-const BOTRAD: f64 = 2.1;
+const BOTRAD: f64 = 1.2;
 const BOTRANDMAXACC: f32 = 15.0;
 const BOTMAXVEL: f32 = 42.0;
 const BOTBOUNCEAMT: f32 = 0.42;
@@ -108,11 +108,48 @@ struct BaseState {
     team: i32,
 }
 
+#[derive(PartialEq,Eq)]
+#[derive(Clone,Copy)]
+#[repr(packed)]
+struct Px {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+impl Px {
+    const White: Px = Px{
+        r: 0xff,
+        g: 0xff,
+        b: 0xff,
+        a: 0xff,
+    };
+    const Black: Px = Px{
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0xff,
+    };
+    const Grey: Px = Px{
+        r: 0x80,
+        g: 0x80,
+        b: 0x80,
+        a: 0xff,
+    };
+    const Clear: Px = Px{
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    };
+}
+
 #[derive(Clone)]
 struct GameMap {
     w: u32,
     h: u32,
-    bytes: Box<[u8]>, // can be color, or for base map it is terrain info
+    bytes: Box<[Px]>, // can be color, or for base map it is terrain info
 }
 
 impl GameMap {
@@ -120,7 +157,43 @@ impl GameMap {
         GameMap{
             w,
             h,
-            bytes: (vec![0; (w * h) as usize]).into_boxed_slice(),
+            bytes: (vec![Px::White; (w * h) as usize]).into_boxed_slice(),
+        }
+    }
+
+    fn set_tile(&mut self, x: u32, y: u32, tile: MapTiles) {
+        let p: Px = tile.into();
+        self.set(x, y, p);
+    }
+
+    fn set(&mut self, x: u32, y: u32, color: Px) {
+        let ind = (x + (y * self.w)) as usize;
+        self.bytes[ind] = color;
+    }
+}
+
+enum MapTiles {
+    Wall,
+    Nothing,
+    Unk,
+}
+
+impl From<Px> for MapTiles {
+    fn from(orig: Px) -> Self {
+        match orig {
+            Px::White => MapTiles::Nothing,
+            Px::Black => MapTiles::Wall,
+            _ => MapTiles::Unk,
+        }
+    }
+}
+
+impl From<MapTiles> for Px {
+    fn from(orig: MapTiles) -> Self {
+        match orig {
+            MapTiles::Nothing => Px::White,
+            MapTiles::Wall => Px::Black,
+            MapTiles::Unk => Px::Clear,
         }
     }
 }
@@ -240,6 +313,25 @@ impl Game {
         // for now spawn a bunch of bots all across the map
         let mut rng = XorShiftRng::seed_from_u64((self.baseseed) as u64);
 
+        // add a couple of random walls
+        for _ in 0..3 {
+            let x: u32 = rng.gen_range(0, self.map.w - 1);
+            let ystart: u32 = rng.gen_range(0,self.map.h - 30);
+            let yend: u32 = rng.gen_range(ystart+1, self.map.h);
+            for y in ystart..yend {
+                self.map.set_tile(x, y, MapTiles::Wall);
+            }
+        }
+
+        for _ in 0..3 {
+            let y: u32 = rng.gen_range(0, self.map.w - 1);
+            let xstart: u32 = rng.gen_range(0,self.map.w - 30);
+            let xend: u32 = rng.gen_range(xstart+1, self.map.w);
+            for x in xstart..xend {
+                self.map.set_tile(x, y, MapTiles::Wall);
+            }
+        }
+
         for _ in 0..1000 {
             self.add_bot(
                 &mut tk, ((self.map.w as f32)/2.0) + rng.gen_range(-(self.map.w as f32)/3.0, (self.map.w as f32)/3.0),
@@ -264,7 +356,7 @@ impl Game {
         }
 
         // play around with starting velocities
-        for (_, b) in &mut tk.bots {
+        for b in tk.bots.values_mut() {
             let b = &mut*b.borrow_mut();
             b.vx = rng.gen_range(-BOTMAXVEL, BOTMAXVEL);
             b.vy = rng.gen_range(-BOTMAXVEL, BOTMAXVEL);
@@ -276,15 +368,6 @@ impl Game {
     }
 
     fn tick(&mut self) {
-        //TODO
-        // move bots with the following priotities
-        // 1: don't move off the map
-        // 2: don't move into a wall
-        // 3: move away from close bots (//TODO have quadtree for map to make nearby lookups easy?)
-        // 4: obey local paint 
-        // 5: random
-
-        
         //DEBUG
         //let newtk: &mut GameTick = &mut self.states[0];
 
@@ -485,7 +568,9 @@ impl Game {
     }
 
     fn draw(&mut self, dt: f32) {
-        // First get it working with no smoothing, just display latest TICK
+        
+        // don't call the canvas API, just fill out the data in a buffer used by a ImageData(buf, width, height) on the js
+        //https://www.hellorust.com/demos/canvas/index.html
         
         // get target ticks to lerp between
         let mut disp2 = self.dis.tick.ceil() as u32;
@@ -529,13 +614,13 @@ impl Game {
         
         // clear canvas
         // save transform
-        self.ctx.save();
+        //self.ctx.save();
         // reset transform
-        self.ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0).expect("Unable to set transform for clearing");
+        //self.ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0).expect("Unable to set transform for clearing");
         // clear everything
-        self.ctx.clear_rect(0.0, 0.0, self.canvas.width() as f64, self.canvas.height() as f64);
+        //self.ctx.clear_rect(0.0, 0.0, self.canvas.width() as f64, self.canvas.height() as f64);
         // restore transform
-        self.ctx.restore();
+        //self.ctx.restore();
 
         // draw bots
         self.ctx.set_fill_style(&JsValue::from_str("#fa110e"));
@@ -565,8 +650,7 @@ impl Game {
         // draw bases
         //TODO
 
-        // draw map features
-        //TODO
+        // Map get drawn from the buffer directly
 
         // adjust the ratio to even out
         let err = ((self.curtick as f32) - self.dis.targetlag) - self.dis.tick;
