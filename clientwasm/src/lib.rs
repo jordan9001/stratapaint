@@ -37,7 +37,7 @@ struct BotState {
 // bot constants
 const BOTRAD: f64 = 1.2;
 const BOTRANDMAXACC: f32 = 15.0;
-const BOTMAXVEL: f32 = 42.0;
+const BOTMAXVEL: f32 = 24.0;
 const BOTBOUNCEAMT: f32 = 0.42;
 const BOTCOLSZ: f32 = (BOTRAD as f32) * 0.15;
 
@@ -111,7 +111,7 @@ struct BaseState {
 #[derive(PartialEq,Eq)]
 #[derive(Clone,Copy)]
 #[repr(packed)]
-struct Px {
+pub struct Px {
     r: u8,
     g: u8,
     b: u8,
@@ -149,7 +149,7 @@ impl Px {
 struct GameMap {
     w: u32,
     h: u32,
-    bytes: Box<[Px]>, // can be color, or for base map it is terrain info
+    data: Box<[Px]>, // can be color, or for base map it is terrain info
 }
 
 impl GameMap {
@@ -157,7 +157,7 @@ impl GameMap {
         GameMap{
             w,
             h,
-            bytes: (vec![Px::White; (w * h) as usize]).into_boxed_slice(),
+            data: (vec![Px::Clear; (w * h) as usize]).into_boxed_slice(),
         }
     }
 
@@ -167,11 +167,27 @@ impl GameMap {
     }
 
     fn set(&mut self, x: u32, y: u32, color: Px) {
+        if (x >= self.w) || (y >= self.h) {
+            panic!("Tried to access map past bounds");
+        }
         let ind = (x + (y * self.w)) as usize;
-        self.bytes[ind] = color;
+        self.data[ind] = color;
+    }
+
+    fn get_tile(&self, x: u32, y: u32) -> MapTiles {
+        self.get(x, y).into()
+    }
+
+    fn get(&self, x: u32, y: u32) -> Px {
+        if (x >= self.w) || (y >= self.h) {
+            panic!("Tried to access map past bounds");
+        }
+        let ind = (x + (y * self.w)) as usize;
+        self.data[ind]
     }
 }
 
+#[derive(PartialEq,Eq)]
 enum MapTiles {
     Wall,
     Nothing,
@@ -254,7 +270,6 @@ struct Game {
     tickstep: f32, // game seconds per tick, doesn't change (try to keep real seconds per tick similar to this)
     curtick: u32, // next tick to process
     map: GameMap, // the static map (walls and cover) below the changing paint layers
-    usermap: GameMap, // a buffer that is passed to the javascript layer to take in paint changes
     ctx: web_sys::CanvasRenderingContext2d, // the canvas ctx
     canvas: web_sys::HtmlCanvasElement,
     baseseed: u32,
@@ -314,7 +329,7 @@ impl Game {
         let mut rng = XorShiftRng::seed_from_u64((self.baseseed) as u64);
 
         // add a couple of random walls
-        for _ in 0..3 {
+        for _ in 0..9 {
             let x: u32 = rng.gen_range(0, self.map.w - 1);
             let ystart: u32 = rng.gen_range(0,self.map.h - 30);
             let yend: u32 = rng.gen_range(ystart+1, self.map.h);
@@ -323,7 +338,7 @@ impl Game {
             }
         }
 
-        for _ in 0..3 {
+        for _ in 0..9 {
             let y: u32 = rng.gen_range(0, self.map.w - 1);
             let xstart: u32 = rng.gen_range(0,self.map.w - 30);
             let xend: u32 = rng.gen_range(xstart+1, self.map.w);
@@ -332,7 +347,7 @@ impl Game {
             }
         }
 
-        for _ in 0..1000 {
+        for _ in 0..1200 {
             self.add_bot(
                 &mut tk, ((self.map.w as f32)/2.0) + rng.gen_range(-(self.map.w as f32)/3.0, (self.map.w as f32)/3.0),
                 ((self.map.h as f32)/2.0) + rng.gen_range(-(self.map.h as f32)/3.0, (self.map.h as f32)/3.0),
@@ -344,7 +359,7 @@ impl Game {
 
         // spawn a bunch in the middle
 
-        for _ in 0..500 {
+        for _ in 0..300 {
             self.add_bot(
                 &mut tk,
                 ((self.map.w as f32)/2.0) + rng.gen_range(-20.0, 20.0),
@@ -503,19 +518,47 @@ impl Game {
             let mut newx = bt.x + (bt.vx * self.tickstep);
             let mut newy = bt.y + (bt.vy * self.tickstep);
 
-            // bounce off walls
-            // TODO
-
             // bounce off edge
             // don't have to be as complicated as walls
             // just don't move, and bounce velocity
-            if newx <= 0.0  || newx >= (self.map.w as f32) {
+            let nix = newx as u32;
+            let niy = newy as u32;
+
+            let mut edgebounced = false;
+            if newx <= 0.0 || nix >= self.map.w {
                 newx = bt.x;
                 bt.vx *= -BOTBOUNCEAMT;
+                edgebounced = true;
             }
-            if newy <= 0.0  || newy >= (self.map.h as f32) {
+            if newy <= 0.0 || niy >= self.map.h {
                 newy = bt.y;
                 bt.vy *= -BOTBOUNCEAMT;
+                edgebounced = true;
+            }
+
+            // bounce off walls
+            // how to do this well?
+            let oix = bt.x as u32;
+            let oiy = bt.y as u32;
+            if (!edgebounced) && (self.map.get_tile(nix, niy) == MapTiles::Wall) && (self.map.get_tile(oix, oiy) != MapTiles::Wall) {
+                let mut xhit = self.map.get_tile(nix, oiy) == MapTiles::Wall;
+                let mut yhit = self.map.get_tile(oix, niy) == MapTiles::Wall;
+                if !xhit && !yhit {
+                    // bounce x and y respectively, but if we hit a corner, bounce both
+                    xhit = true;
+                    yhit = true;
+                }
+
+                if xhit{
+                    // bounce x
+                    newx = bt.x;
+                    bt.vx *= -BOTBOUNCEAMT;
+                }
+                if yhit{
+                    // bounce y
+                    newy = bt.y;
+                    bt.vy *= -BOTBOUNCEAMT;
+                }
             }
 
             // move the bot
@@ -524,7 +567,7 @@ impl Game {
             bt.y = newy;
         }
 
-        // clean old tick info not needed for drawing        
+        // clean old tick info not needed for drawing
         let mut i = 0;
         loop {
             if i >= self.states.len() {
@@ -611,16 +654,6 @@ impl Game {
         //DEBUG
         //let tk1 = self.get_cur_tick();
         //let tk2 = self.get_cur_tick();
-        
-        // clear canvas
-        // save transform
-        //self.ctx.save();
-        // reset transform
-        //self.ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0).expect("Unable to set transform for clearing");
-        // clear everything
-        //self.ctx.clear_rect(0.0, 0.0, self.canvas.width() as f64, self.canvas.height() as f64);
-        // restore transform
-        //self.ctx.restore();
 
         // draw bots
         self.ctx.set_fill_style(&JsValue::from_str("#fa110e"));
@@ -628,7 +661,6 @@ impl Game {
         // step through both ticks for bots
         for (id, bt1) in tk1.bots.iter() {
             if let Some(bt2) = tk2.bots.get(id) {
-
                 let bt1 = bt1.borrow();
                 let bt2 = bt2.borrow();
                 // lerp
@@ -650,7 +682,7 @@ impl Game {
         // draw bases
         //TODO
 
-        // Map get drawn from the buffer directly
+        // Maps get drawn from the buffer directly
 
         // adjust the ratio to even out
         let err = ((self.curtick as f32) - self.dis.targetlag) - self.dis.tick;
@@ -760,7 +792,6 @@ pub fn init_game(can_id: &str,
                 avgerrsum: 0.0,
             },
             map: GameMap::new(mapw, maph),
-            usermap: GameMap::new(mapw, maph),
             ctx,
             canvas,
             baseseed: seed,
@@ -789,6 +820,22 @@ pub fn tick() {
             game.tick();
         }
     });
+}
+
+#[wasm_bindgen]
+pub fn get_buf(team: i32) -> *const Px {
+    let mut retbuf = std::ptr::null();
+    GAME.with(|g| {
+        if let Some(game) = &mut *g.borrow_mut() {
+            if team == -1 {
+                let buf = &game.map.data;
+                let b = &*buf;
+                retbuf = b.as_ptr();
+            }
+        }
+    });
+
+    retbuf
 }
 
 #[wasm_bindgen]

@@ -29,11 +29,12 @@ function dodraw(ts) {
     // clear the canvas
     ctx.save();
     ctx.setTransform(1,0,0,1,0,0);
-    ctx.clear_rect(0.0, 0.0, can.width, can.height);
+    ctx.clearRect(0.0, 0.0, can.width, can.height);
     ctx.restore();
 
     // let the engine update it's stuff
-    draw();
+    ctx.putImageData(mapimg, 0, 0);
+    draw(dt);
 
     // draw the images from the buffers as needed
 
@@ -41,7 +42,7 @@ function dodraw(ts) {
     //TODO
 
     // base map image
-    ctx.putImageData(mapimg, 0, 0);
+    
 
     requestAnimationFrame(dodraw);
 }
@@ -59,7 +60,7 @@ function dotick() {
     }
 }
 
-function main() {
+function main(mem) {
     console.log("Game loading...");
 
     let ws = new WebSocket("ws://" + location.host + "/con");
@@ -83,11 +84,16 @@ function main() {
     init_game(canid, width, height, 0x100, tick_step, 0);
 
     // set up a ImageData for the map
-    var buf = getbuf(-1);
-    var offset = ;
+    var buf = get_buf(-1);
+    if (buf == 0) {
+        console.log("Got null Map Buffer");
+        return;
+    }
+
     var len = width * height * 4;
-    var mapbuf = new Uint8ClampedArray(buf, offset, len);
+    var mapbuf = new Uint8ClampedArray(mem.buffer, buf, len);
     mapimg = new ImageData(mapbuf, width, height);
+    
 
     // start drawing
     requestAnimationFrame(dodraw);
@@ -108,11 +114,13 @@ function main() {
 }
 
 // first init webasm and import the symbols we need
-import init, { adj_dis, init_game, tick, draw, getbuf } from './clientwasm.js';
+import init, { adj_dis, init_game, tick, draw, get_buf } from './clientwasm.js';
 (async function() {
-	await init();
+    var wasm = await init();
+    //console.log(wasm);
+    //console.log(typeof(wasm));
 
-	main();
+	main(wasm.memory);
 })();
 
 
