@@ -8,6 +8,13 @@ var avtick = [];
 var mapimg = undefined;
 var can = document.getElementById(canid);
 var ctx = can.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+var can2 = undefined;
+var ctx2 = undefined;
+
+var dispscale=1.0;
+var dispxoff = 0;
+var dispyoff = 0;
 
 function dodraw(ts) {
     // draw the game
@@ -23,7 +30,7 @@ function dodraw(ts) {
     }
 
     if (avtick.length != 0) {
-        console.log("" + dt + "\navg draw: " + avdt.reduce(function(a,b) { return a + b; }) / avdt.length + "\navg tick: ", avtick.reduce(function(a,b) { return a + b; }) / avtick.length);
+        //console.log("" + dt + "\navg draw: " + avdt.reduce(function(a,b) { return a + b; }) / avdt.length + "\navg tick: ", avtick.reduce(function(a,b) { return a + b; }) / avtick.length);
     }
 
     // clear the canvas
@@ -32,17 +39,15 @@ function dodraw(ts) {
     ctx.clearRect(0.0, 0.0, can.width, can.height);
     ctx.restore();
 
-    // let the engine update it's stuff
-    ctx.putImageData(mapimg, 0, 0);
-    draw(dt);
+    // put the image data on our separate canvas
+    ctx2.putImageData(mapimg, 0, 0);
+    ctx.drawImage(can2, 0, 0);
 
-    // draw the images from the buffers as needed
+    // let the engine update it's stuff
+    draw(dt);
 
     // user painting
     //TODO
-
-    // base map image
-    
 
     requestAnimationFrame(dodraw);
 }
@@ -90,16 +95,63 @@ function main(mem) {
         return;
     }
 
+    // set up needed image buffers
     var len = width * height * 4;
     var mapbuf = new Uint8ClampedArray(mem.buffer, buf, len);
     mapimg = new ImageData(mapbuf, width, height);
-    
+
+    can2 = document.createElement('canvas');
+    can2.id = "can2";
+    can2.width = width;
+    can2.height = height;
+    ctx2 = can2.getContext("2d");
+
+    // set up camera transform callbacks
+    //TODO
+    can.onwheel = function(evt) {
+        var y = evt.deltaY;
+        dispscale += y * 0.001;
+        ctx.setTransform(dispscale, 0, 0, dispscale, dispxoff, dispyoff);
+        return false;
+    }
+    window.onkeydown = function(evt) {
+        console.log(evt);
+        var camchanged = false;
+        switch (evt.key) {
+            case "ArrowDown":
+                dispyoff -= 15;
+                camchanged = true;
+                break;
+            case "ArrowUp":
+                dispyoff += 15;
+                camchanged = true;
+                break;
+            case "ArrowRight":
+                dispxoff -= 15;
+                camchanged = true;
+                break;
+            case "ArrowLeft":
+                dispxoff += 15;
+                camchanged = true;
+                break;
+        }
+
+        if (camchanged) {
+            ctx.setTransform(dispscale, 0, 0, dispscale, dispxoff, dispyoff);
+            return false;
+        } else {
+            return true;
+        }
+        
+    }
+
+    // set up user painting callbacks
+    //TODO
 
     // start drawing
     requestAnimationFrame(dodraw);
 
     // start ticks
-    //TODO move tick stuff this to a separate looping callback unaffected by tab being inactive
     setInterval(dotick, tick_step);
 
     // wasm jobs:
@@ -126,3 +178,6 @@ import init, { adj_dis, init_game, tick, draw, get_buf } from './clientwasm.js';
 
 //DEBUG
 window.adj_dis = adj_dis;
+window.dispxoff = dispxoff;
+window.dispyoff = dispyoff;
+window.dispscale = dispscale;

@@ -35,9 +35,9 @@ struct BotState {
 }
 
 // bot constants
-const BOTRAD: f64 = 1.2;
-const BOTRANDMAXACC: f32 = 15.0;
-const BOTMAXVEL: f32 = 24.0;
+const BOTRAD: f64 = 0.69;
+const BOTRANDMAXACC: f32 = 6.0;
+const BOTMAXVEL: f32 = 9.0;
 const BOTBOUNCEAMT: f32 = 0.42;
 const BOTCOLSZ: f32 = (BOTRAD as f32) * 0.15;
 
